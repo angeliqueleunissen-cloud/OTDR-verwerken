@@ -1,0 +1,1118 @@
+<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Meetrapportage VZ – SOR import v156</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f3f6f8;margin:0;color:#17324d}.wrap{max-width:980px;margin:24px auto;padding:16px}.card{background:white;border-radius:14px;padding:22px;box-shadow:0 4px 18px #0001;margin-bottom:16px}h1{margin-top:0}label{display:block;font-weight:bold;margin:12px 0 6px}input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #cbd5df;border-radius:8px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.slot{background:#f7f9fb;border:2px dashed #b8c7d5;border-radius:10px;padding:14px;min-height:150px;transition:.15s}.slot h3{margin:0 0 8px;font-size:16px}.slot.dragover{background:#e6f4ff;border-color:#1684b7}.filelist{font-size:13px;color:#345;margin-top:10px;max-height:190px;overflow:auto}.fileitem{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #e5ebf0}.fileitem span{overflow-wrap:anywhere}.removeFile{margin:0;padding:5px 9px;background:#b42318;color:#fff;font-size:12px;flex:0 0 auto}.dropHint{font-size:13px;color:#667;margin:6px 0 12px}button{background:#168447;color:white;border:0;border-radius:9px;padding:13px 20px;font-weight:bold;font-size:16px;margin-top:18px;cursor:pointer}.status{white-space:pre-wrap;background:#eef5f8;padding:12px;border-radius:8px;margin-top:14px}.err{background:#fff0f0;color:#8a2020}.small{font-size:13px;color:#667}@media(max-width:700px){.grid{grid-template-columns:1fr}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+</head><body><div class="wrap"><div class="card">
+<h1>Meetrapportage VZ – SOR import v156</h1>
+<p>Deze versie verwerkt alleen de OTDR-metingen. Er wordt geen PDF of locatieroute meer uitgelezen.</p>
+<p>Kies het bestaande Excelbestand met de tabbladen Meetrapportage Ring en Meetrapportage Verbinding en voeg de SOR-metingen toe.</p>
+<label>Excel meetrapportage (.xlsx)</label><input id="xlsx" type="file" accept=".xlsx">
+</div><div class="card"><h2>SOR-bestanden</h2><p class="small">Sleep de OTDR-metingen met events naar de juiste meetrichting. De dropzone bepaalt automatisch of het A-B of B-A is; je hoeft geen locaties meer in te vullen.</p>
+<div class="grid">
+ <div class="slot" id="eventAZone"><h3>1A. OTDR met events – Locatie A naar B</h3><p class="dropHint">Sleep hier de linkmeting(en) die vanaf locatie A zijn gemeten. Events, afstanden, demping en reflecties worden volledig verwerkt.</p><input type="file" id="eventAFiles" accept=".sor,application/octet-stream" multiple><div class="filelist" id="eventAList">Nog geen bestanden toegevoegd.</div></div>
+ <div class="slot" id="eventBZone"><h3>1B. OTDR met events – Locatie B naar A</h3><p class="dropHint">Sleep hier de linkmeting(en) die vanaf locatie B zijn gemeten. Events, afstanden, demping en reflecties worden volledig verwerkt.</p><input type="file" id="eventBFiles" accept=".sor,application/octet-stream" multiple><div class="filelist" id="eventBList">Nog geen bestanden toegevoegd.</div></div>
+ <div class="slot" id="totalZone"><h3>2. Overige OTDR-metingen (v02–v12)</h3><p class="dropHint">Sleep hier de overige SOR-bestanden naartoe. Deze vullen alleen linknaam in kolom C en totale demping in kolom E; events worden overgeslagen.</p><input type="file" id="totalFiles" accept=".sor,application/octet-stream" multiple><div class="filelist" id="totalList">Nog geen bestanden toegevoegd.</div></div>
+</div>
+<label for="reportType">Welke metingen wil je verwerken?</label><select id="reportType" style="width:100%;box-sizing:border-box;padding:12px;border:1px solid #cbd5df;border-radius:8px"><option value="">-- Maak een keuze --</option><option value="ring">Ringmetingen – tabblad Meetrapportage Ring (1310, 1550 en 1625 nm)</option><option value="connection">Metingen verbindingen – tabblad Meetrapportage Verbinding (vezel 1 t/m 96)</option></select>
+<p class="small">Ringmetingen worden verwerkt in het ringrapport. Metingen verbindingen gebruiken het V-vezelnummer uit de bestandsnaam. Verschillende vezelnummers aan locatie A en B kunnen aan elkaar worden gekoppeld. Je kunt de keuze hieronder altijd annuleren.</p>
+</div><button id="chooseFolder" type="button" style="background:#27638a">Map kiezen voor opslaan</button> <span id="folderStatus" class="small">Geen map gekozen – bestand wordt normaal gedownload.</span><br><button id="go">Start verwerking</button> <button id="clearAll" type="button" style="background:#b42318;margin-left:8px">Wis alle SOR-bestanden en meettype</button> <button id="cancel" type="button" style="background:#687786;margin-left:8px">Annuleren</button><div id="status" class="status">Selecteer het Excelbestand en sleep de SOR-bestanden naar het juiste vak.</div>
+<p class="small">De app leest de totale demping rechtstreeks uit het SOR-bestand. Voor v02 t/m v12 worden alleen linknaam en totale demping ingevuld; individuele events zijn daarvoor niet nodig. De originele tabbladen, kopteksten en bestaande formules blijven behouden.</p></div></div><script>
+const $=id=>document.getElementById(id);
+let outputDirectoryHandle=null;
+$('chooseFolder').addEventListener('click',async()=>{try{if(!window.showDirectoryPicker){$('folderStatus').textContent='Map kiezen wordt niet ondersteund in deze browser; gebruik Chrome of Edge.';return;}outputDirectoryHandle=await window.showDirectoryPicker({mode:'readwrite'});$('folderStatus').textContent='Opslagmap gekozen: '+(outputDirectoryHandle.name||'geselecteerde map');}catch(e){if(e.name!=='AbortError')$('folderStatus').textContent='Map kiezen mislukt: '+e.message;}});
+function u16(v,o){return v.getUint16(o,true)} function i16(v,o){return v.getInt16(o,true)} function u32(v,o){return v.getUint32(o,true)} function i32(v,o){return v.getInt32(o,true)}
+function cstr(v,o){let a=[];while(o<v.byteLength){const x=v.getUint8(o++);if(x===0)break;a.push(x)}return [new TextDecoder('latin1').decode(new Uint8Array(a)),o]}
+function blockMap(buf){const v=new DataView(buf);if(v.byteLength<12)throw Error('SOR-bestand te klein of ongeldig');const mapSize=u32(v,6),n=u16(v,10);if(!mapSize||n<2||mapSize>v.byteLength)throw Error('Ongeldige SOR blokmap');let p=12,entries=[];for(let i=0;i<n-1;i++){const [name,p2]=cstr(v,p);p=p2;const rev=u16(v,p);p+=2;const size=u32(v,p);p+=4;entries.push({name,rev,size})}let off=mapSize,out={};for(const e of entries){if(off+e.size>v.byteLength)throw Error('SOR blok buiten bestand: '+e.name);out[e.name]={...e,offset:off};off+=e.size}return out}
+function parseSOR(buf){let v=new DataView(buf), blocks=blockMap(buf), C=299792458;function payload(name){let b=blocks[name];if(!b)throw new Error('SOR mist blok: '+name);let [n,p]=cstr(v,b.offset);return {b,p,n}}
+let g=payload('GenParams'),p=g.p;let language=new TextDecoder().decode(new Uint8Array(buf,p,2));p+=2;let [cable,p1]=cstr(v,p);p=p1;let [fiber,p2]=cstr(v,p);p=p2;let fiberType=u16(v,p);p+=2;let nominalWavelength=u16(v,p);p+=2;let [locA,p3]=cstr(v,p);p=p3;let [locB,p4]=cstr(v,p);p=p4;let [cableCode,p5]=cstr(v,p);p=p5;let condition=new TextDecoder().decode(new Uint8Array(buf,p,2));p+=2;let userOffset=i32(v,p);p+=4;let userOffsetDistance=i32(v,p);p+=4;let [operator,p6]=cstr(v,p);p=p6;let [comment]=cstr(v,p);
+let s=payload('SupParams'),sp=s.p, sup=[];for(let i=0;i<7;i++){let [x,np]=cstr(v,sp);sp=np;sup.push(x)}
+let f=payload('FxdParams'),fp=f.p;let timestamp=u32(v,fp);fp+=4;let units=new TextDecoder().decode(new Uint8Array(buf,fp,2));fp+=2;let actualWavelength=u16(v,fp);fp+=2;let acqOffset=i32(v,fp);fp+=4;let acqOffsetDistance=i32(v,fp);fp+=4;let N=u16(v,fp);fp+=2;let pulse=[];for(let i=0;i<N;i++){pulse.push(u16(v,fp));fp+=2}let spacing=[];for(let i=0;i<N;i++){spacing.push(u32(v,fp));fp+=4}let points=[];for(let i=0;i<N;i++){points.push(u32(v,fp));fp+=4}let index=u32(v,fp)/100000;fp+=4;let backscatter=u16(v,fp)/10;fp+=2;let averages=u32(v,fp);fp+=4;let avgTime=u16(v,fp);fp+=2;let rangeTime=u32(v,fp);fp+=4;let rangeDistance=i32(v,fp);fp+=4;let frontOffset=i32(v,fp);fp+=4;let noise=u16(v,fp)/1000;fp+=2;let noiseScale=i16(v,fp);fp+=2;let powerOffset=u16(v,fp)/1000;fp+=2;let lossThreshold=u16(v,fp)/1000;fp+=2;let reflThreshold=u16(v,fp)/1000;fp+=2;let eofThreshold=u16(v,fp)/1000;fp+=2;let traceType=new TextDecoder().decode(new Uint8Array(buf,fp,2));
+let events=[],spanLoss=0,spanStart=0,spanFinish=0,spanORL=0,orlStart=0,orlFinish=0,spanLength=0;
+if(blocks['KeyEvents']){
+ let k=payload('KeyEvents'),kp=k.p,count=u16(v,kp);kp+=2;
+ for(let i=0;i<count;i++){let e=kp+i*44;if(e+44>buf.byteLength)break;let num=u16(v,e),time=u32(v,e+2),att=i16(v,e+6)/1000,loss=i16(v,e+8)/1000,refl=i32(v,e+10)/1000;let code=new TextDecoder('latin1').decode(new Uint8Array(buf,e+14,6));let tech=new TextDecoder('latin1').decode(new Uint8Array(buf,e+20,2));let markers=[];for(let j=0;j<5;j++)markers.push(u32(v,e+22+j*4));events.push({num,time,att,loss,refl,code,tech,markers})}
+ let trailer=kp+count*44;if(trailer+20<=buf.byteLength){spanLoss=i32(v,trailer)/1000;spanStart=i32(v,trailer+4);spanFinish=u32(v,trailer+8);spanORL=u16(v,trailer+12)/1000;orlStart=u32(v,trailer+14);orlFinish=u32(v,trailer+18);}
+}
+function dist(t){return C*t*1e-10/index/1000}spanLength=spanFinish?dist(spanFinish):0;let endIdx=events.findIndex(e=>e.code[1]==='E');if(endIdx<0)endIdx=Math.max(0,events.length-2);let endEvent=events[endIdx];let avgSplice=events.slice(0,endIdx+1).filter(e=>e.code[0]==='0').reduce((a,e)=>a+e.loss,0)/Math.max(1,events.slice(0,endIdx+1).filter(e=>e.code[0]==='0').length);let maxSplice=Math.max(...events.slice(0,endIdx+1).filter(e=>e.code[0]==='0').map(e=>e.loss),0);
+const isYokogawaFile=!!blocks['YokogawaSpecial']||/YOKOGAWA/i.test(sup.join(' '));
+let dp=payload('DataPts'),dp0=dp.p,total=u32(v,dp0),groups=u16(v,dp0+4),q=dp0+6,trace=[],traceDb=[],tracePositions=[],groupScales=[];let sampleIndex=0;
+for(let gidx=0;gidx<groups;gidx++){
+ let m=u32(v,q),scale=u16(v,q+4);q+=6;groupScales.push(scale);
+ // Yokogawa AQ7280 DataPts-spacing is hier al omgerekend naar de fysieke OTDR-afstand; niet halveren.
+ const distanceFactor=1;
+ const groupDx=C*(spacing[gidx]||spacing[0])*1e-14/index/1000*distanceFactor;
+ const groupX0=C*(acqOffset*1e-10)/index/1000*distanceFactor;
+ for(let i=0;i<m;i++){
+  const raw=u16(v,q+i*2);trace.push(raw);traceDb.push(raw*scale*1e-6);tracePositions.push(groupX0+i*groupDx);
+ }
+ q+=m*2;sampleIndex+=m;
+}
+// Yokogawa AQ7280: altijd 1 km voorspan én 1 km naspan buiten de verbinding.
+// Knip beide stukken uit de trace voordat eventdetectie en totale demping worden berekend.
+// De overblijvende verbinding begint daardoor op 0 m en eindigt 1 km vóór het ruiseinde.
+const yokogawaLaunchOffsetKm=isYokogawaFile?1.0:0;
+const yokogawaTailOffsetKm=isYokogawaFile?1.0:0;
+if(isYokogawaFile && tracePositions.length===traceDb.length && tracePositions.length){
+ const finitePositions=tracePositions.filter(Number.isFinite);
+ const rawTraceEndKm=finitePositions.length?Math.max(...finitePositions):NaN;
+ const usableEndKm=rawTraceEndKm-yokogawaTailOffsetKm;
+ const keep=[];
+ for(let i=0;i<tracePositions.length;i++){
+  const pos=tracePositions[i];
+  if(Number.isFinite(pos) && pos>=yokogawaLaunchOffsetKm && pos<=usableEndKm){keep.push(i);}
+ }
+ trace=keep.map(i=>trace[i]);
+ traceDb=keep.map(i=>traceDb[i]);
+ tracePositions=keep.map(i=>i>=0?tracePositions[i]-yokogawaLaunchOffsetKm:NaN);
+ // De lengte is nu uitsluitend de verbinding tussen einde voorspan en begin naspan.
+ if(tracePositions.length>1){
+  const croppedEndKm=Math.max(...tracePositions.filter(Number.isFinite));
+  if(Number.isFinite(croppedEndKm)&&croppedEndKm>0)spanLength=croppedEndKm;
+ }
+}
+// Yokogawa-bestanden bevatten vaak geen KeyEvents. De meetlengte staat dan
+// wel in het DataPts-blok: aantal meetpunten × sample-afstand.
+// Gebruik de laatste tracepositie als lengte; wacht niet op een noise-detectie.
+if(isYokogawaFile&&!blocks['KeyEvents']&&tracePositions.length>1&&!(spanLength>0)){
+ const traceEndKm=Math.max(...tracePositions.filter(Number.isFinite));
+ if(Number.isFinite(traceEndKm)&&traceEndKm>0)spanLength=traceEndKm;
+}
+let dx=C*(spacing[0]*1e-14)/index/1000;let x0=C*(acqOffset*1e-10)/index/1000;
+function medianOf(a){if(!a.length)return NaN;const z=a.slice().sort((x,y)=>x-y),m=Math.floor(z.length/2);return z.length%2?z[m]:(z[m-1]+z[m])/2;}
+function stdOf(a){if(a.length<2)return 0;const mean=a.reduce((s,x)=>s+x,0)/a.length;return Math.sqrt(a.reduce((s,x)=>s+(x-mean)*(x-mean),0)/(a.length-1));}
+let traceLossDb=NaN,traceLengthMeters=NaN,traceNoiseStart=-1;
+if(!blocks['KeyEvents']&&traceDb.length>1000){
+ const startLevel=medianOf(traceDb.slice(200,Math.min(500,traceDb.length)));
+ const first=Math.max(500,Math.floor(traceDb.length*.1));
+ for(let i=first;i<traceDb.length-200;i+=25){
+  if(stdOf(traceDb.slice(i,i+100))>1.0&&stdOf(traceDb.slice(i+100,i+200))>1.0){traceNoiseStart=i;break;}
+ }
+ if(traceNoiseStart>600){
+  const endLevel=medianOf(traceDb.slice(Math.max(0,traceNoiseStart-500),traceNoiseStart-100));
+  const loss=endLevel-startLevel;
+  const endKm=tracePositions[traceNoiseStart]||0;
+  if(Number.isFinite(loss)&&loss>0&&loss<30&&Number.isFinite(endKm)&&endKm>0){
+   traceLossDb=loss;traceLengthMeters=endKm*1000;
+  }
+ }
+}
+let sampled=[];let step=Math.max(1,Math.floor(trace.length/900));for(let i=0;i<trace.length;i+=step){sampled.push({x:tracePositions[i],y:-traceDb[i]});}
+// SOR zonder KeyEvents: detecteer echte stapovergangen rechtstreeks in DataPts.
+// Eventverlies = verschil tussen robuuste mediane trace-niveaus vóór en na de overgang.
+// Reflectie blijft leeg: die kan niet betrouwbaar uit alleen deze amplitudestap worden afgeleid.
+if(!events.length&&traceDb.length>1000&&tracePositions.length===traceDb.length){
+ const dxMeters=Math.max(0.05,(tracePositions[1]-tracePositions[0])*1000);
+ const win=Math.max(5,Math.min(80,Math.round(8/dxMeters)));
+ // Yokogawa-traces bevatten vaak kleine rimpels. Gebruik daar een hogere
+ // detectiedrempel en grotere minimale afstand om dubbele/ruis-events te beperken.
+ const isYokogawaTrace=!!blocks['YokogawaSpecial']||/YOKOGAWA/i.test(sup.join(' '));
+ const minGap=Math.max(10,Math.round((isYokogawaTrace?250:150)/dxMeters));
+ const threshold=isYokogawaTrace?0.35:0.20;
+ const candidates=[];
+ for(let i=win;i<traceDb.length-win;i+=2){
+  const left=medianOf(traceDb.slice(i-win,i));
+  const right=medianOf(traceDb.slice(i,i+win));
+  const loss=left-right;
+  if(Number.isFinite(loss)&&Math.abs(loss)>=threshold){
+   const outerLeft=medianOf(traceDb.slice(Math.max(0,i-3*win),Math.max(0,i-2*win)));
+   const outerRight=medianOf(traceDb.slice(Math.min(traceDb.length,i+2*win),Math.min(traceDb.length,i+3*win)));
+   // Verwerp brede hellingen: een event is een lokale niveauverandering, geen kabelhelling.
+   const outerTrend=(outerLeft-outerRight)/2;
+   const localStep=loss-outerTrend;
+   if(Math.abs(localStep)>=threshold)candidates.push({i,loss:localStep,score:Math.abs(localStep)});
+  }
+ }
+ // Niet-maximale detecties rond dezelfde overgang samenvoegen.
+ candidates.sort((a,b)=>b.score-a.score);
+ const chosen=[];
+ for(const c of candidates){if(chosen.every(x=>Math.abs(x.i-c.i)>=minGap))chosen.push(c);}
+ // Geen vaste bovengrens: behoud alle overgangen die de ruisfilter en minimale afstand doorstaan.
+ // Zo werkt dezelfde detectie ook bij andere kabels en rapportages met meer of minder events.
+ const ranked=chosen.slice().sort((a,b)=>a.i-b.i);
+ events=ranked.map((c,i)=>({num:i+1,time:Math.round((tracePositions[c.i]*1000)*index/(C*1e-10)),distanceMeters:tracePositions[c.i]*1000,att:NaN,loss:c.loss,refl:NaN,code:'0T',tech:'TRACE',markers:[0,0,0,0,0],markerDistances:[0,0,0,0,0],traceDetected:true,provisional:false}));
+ if(Number.isFinite(traceLengthMeters)){
+  const endMeters=traceLengthMeters;
+  events.push({num:events.length+1,time:Math.round(endMeters*index/(C*1e-10)),distanceMeters:endMeters,att:NaN,loss:NaN,refl:NaN,code:'0E',tech:'TRACE',markers:[0,0,0,0,0],markerDistances:[0,0,0,0,0],traceDetected:true,provisional:false});
+  spanLength=endMeters/1000;
+ }
+ if(Number.isFinite(traceLossDb)){spanLoss=traceLossDb;spanFinish=Math.round(spanLength*1000*index/(C*1e-10));}
+}
+// Yokogawa zonder KeyEvents heeft geen expliciet start-event. Voeg het meetstartpunt
+// op 0 meter toe vóór de trace-overgangen, anders verdwijnt de eerste trajectsectie
+// (vaak circa 700 m) uit de eventkolommen van het ringrapport.
+if((!!blocks['YokogawaSpecial']||/YOKOGAWA/i.test(sup.join(' ')))&&!blocks['KeyEvents']){
+ events.unshift({num:0,time:0,att:NaN,loss:0,refl:NaN,code:'0S',tech:'START',markers:[0,0,0,0,0],markerDistances:[0,0,0,0,0],distanceMeters:0,startPoint:true});
+}
+let dt=new Date(timestamp*1000);let date=dt.getDate()+'-'+(dt.getMonth()+1)+'-'+dt.getFullYear();let time=dt.toLocaleTimeString('nl-NL',{hour12:false});
+// In SOR v2 bevat ieder KeyEvent vijf markerposities. Deze zijn in 100 ps opgeslagen.
+// Ze worden hieronder later omgezet naar km en gekoppeld aan de markersectie van het EXFO-rapport.
+for(const e of events)e.markerDistances=e.markers.map(t=>dist(t));
+// SupParams heeft per fabrikant een andere veldindeling.
+// Yokogawa: fabrikant, model, serienummer, hardwarecode 1, hardwarecode 2, softwareversie.
+// EXFO: SupParams bevat vaak klantnaam in veld 1, lege velden 2-3, model in veld 4 en serienummer in veld 5.
+const isExfo=!!(blocks['ExfoAdditionalInfo']||blocks['ExfoNewProprietaryBlock 01']);
+const isYokogawa=!!blocks['YokogawaSpecial'] || /YOKOGAWA/i.test(sup.join(' '));
+let equipment;
+if(isYokogawa){
+ equipment={manufacturer:sup[0]||'Yokogawa',model:sup[1]||'',serial:sup[2]||'',hardware1:sup[3]||'',hardware2:sup[4]||'',software:sup[5]||''};
+}else if(isExfo){
+ equipment={manufacturer:'EXFO',model:sup[3]||sup[1]||'',serial:sup[4]||sup[2]||'',hardware1:'',hardware2:'',software:''};
+}else{
+ // Onbekende fabrikant: bewaar de beschikbare SupParams-velden, maar verzin geen fabrikant.
+ equipment={manufacturer:sup[0]||'',model:sup[1]||sup[3]||'',serial:sup[2]||sup[4]||'',hardware1:sup[3]||'',hardware2:sup[4]||'',software:sup[5]||''};
+}
+return {equipment,hasKeyEvents:!!blocks['KeyEvents'],traceDerived:Number.isFinite(traceLossDb),language,cable,fiber,fiberType,nominalWavelength,locA,locB,cableCode,condition,userOffset,userOffsetDistance,operator,comment,sup,actualWavelength,units,pulse,spacing,points,index,backscatter,averages,avgTime,rangeTime,rangeDistance,frontOffset,noise,noiseScale,powerOffset,lossThreshold,reflThreshold,eofThreshold,traceType,events,spanLoss,spanStart,spanFinish,spanORL,spanLength,avgSplice,maxSplice,trace:sampled,traceRaw:trace,traceDb,tracePositions,traceLossDb,traceLengthMeters,traceNoiseStart,yokogawaLaunchOffsetKm,dx,x0,date,time};}
+
+function writeEquipmentSheet(wb, records){
+ // Vul uitsluitend de zes gevraagde apparaatvelden in het bestaande sjabloon.
+ // Kant A hoort bij de A-B-meting (kolom C); kant B bij de B-A-meting (kolom F).
+ const ws=wb.getWorksheet('Meetapparatuur');
+ if(!ws) throw new Error('Werkblad Meetapparatuur niet gevonden.');
+ const fields=[
+  {row:13,index:0}, // Fabrikant
+  {row:14,index:1}, // Type meetapparaat
+  {row:15,index:3}, // Hardware-/modulecode 1
+  {row:16,index:4}, // Hardware-/modulecode 2
+  {row:17,index:2}, // Serienummer
+  {row:18,index:5}  // Softwareversie
+ ];
+ const sideRecord={A:records.find(r=>r.dir==='AB'),B:records.find(r=>r.dir==='BA')};
+ // Maak eerst uitsluitend de zes invoervelden in C en F leeg. Zo blijven oude waarden
+ // van een eerdere import niet ten onrechte bij locatie A staan.
+ for(const field of fields){ ws.getCell(field.row,3).value=null; ws.getCell(field.row,6).value=null; }
+ // Een SOR met B-A in de bestandsnaam is gemeten vanaf locatie B en hoort uitsluitend in F.
+ for(const side of ['A','B']){
+  const rec=sideRecord[side];
+  if(!rec) continue;
+  const sup=rec.sup||[];
+  const valueCol=side==='A'?3:6;
+  for(const field of fields){
+   const eq=rec.equipment||{};
+   const keys=['manufacturer','model','hardware1','hardware2','serial','software'];
+   const value=String(rec.equipment ? (eq[keys[fields.indexOf(field)]]||'') : (sup[field.index]||'')).trim();
+   if(value) ws.getCell(field.row,valueCol).value=value;
+  }
+ }
+ return Object.values(sideRecord).filter(Boolean).length;
+}
+function writeRingEquipment(ws, records){
+ // Meetapparatuur wordt in het ringrapport zelf gezet: Kant A in E5:E10,
+ // Kant B in E18:E23. Volgorde: fabrikant, type, hardware/module 1,
+ // hardware/module 2, serienummer en softwareversie.
+ const fields=['manufacturer','model','hardware1','hardware2','serial','software'];
+ const sideRecord={A:records.find(r=>r.dir==='AB'),B:records.find(r=>r.dir==='BA')};
+ for(const [side,startRow] of [['A',5],['B',18]]){
+  const rec=sideRecord[side];
+  for(let i=0;i<fields.length;i++){
+   const cell=ws.getCell(startRow+i,5);
+   cell.value=rec?String(rec.equipment?.[fields[i]]||'').trim():null;
+  }
+ }
+ return Object.values(sideRecord).filter(Boolean).length;
+}
+function eventKm(e,p){return 299792458*e.time*1e-10/p.index/1000}
+function fillDirection(ws,p,wl,dir,fileName,maxCols=7,totalLossDb=NaN,pdfExpected=null,pdfSectionLengths=null,referenceEvents=null,referenceLengthMeters=NaN,referenceDirection=null){
+ const rows={1310:{AB:52,BA:57},1550:{AB:65,BA:70},1625:{AB:78,BA:83}};
+ const distanceRow=rows[wl][dir];
+ const sectionRow=distanceRow+1;
+ const lossRow=distanceRow+2,reflRow=distanceRow+3;
+ // Rij 37 toont de werkelijke sectielengtes uit het PDF-schema, in meetrichting.
+ // De eerste sectie begint bij locatie A of B; die startlocatie staat in D37.
+ if(pdfSectionLengths&&pdfSectionLengths.length){
+  ws.getCell(37,4).value='A-B start: '+(window.__pniStartAB||'A')+' | B-A start: '+(window.__pniStartBA||'B');
+  ws.getCell(37,4).numFmt='@';
+ }
+ ws.getCell(distanceRow,3).value=fileName;
+ // Zet het vezelnummer uit de SOR-bestandsnaam in kolom B van de kopregel
+ // van iedere meetrichting. Voorbeeld: 0011_xxx.SOR wordt V11.
+ const fiberLabelRows={1310:{AB:52,BA:57},1550:{AB:65,BA:70},1625:{AB:78,BA:82}};
+ const fiberLabelRow=fiberLabelRows[wl]?.[dir];
+ const fiberInfo=getFiberNumber(fileName);
+ if(fiberLabelRow){
+  ws.getCell(fiberLabelRow,2).value=fiberInfo?fiberInfo.label:'';
+  ws.getCell(fiberLabelRow,2).numFmt='@'; // Vezelcode blijft V11, zonder decimalen.
+  ws.getCell(fiberLabelRow,2).alignment={...(ws.getCell(fiberLabelRow,2).alignment||{}),horizontal:'center'};
+ }
+ const endIdx=p.events.findIndex(e=>e.code&&e.code[1]==='E');
+ let events=p.events.slice(0,endIdx>=0?endIdx+1:p.events.length);
+ // Gebruik voor B-A exact dezelfde fysieke eventlocaties als A-B als referentie.
+ // Koppel per A-B-event maximaal één B-A-event aan de omgekeerde afstand
+ // (totale kabellengte minus A-B-afstand). Zo verschijnen trace-ruis en extra
+ // B-A-detecties niet als extra events in het meetrapport.
+ if(dir==='BA'&&!/YOKOGAWA/i.test(String(p.equipment?.manufacturer||''))&&Array.isArray(referenceEvents)&&referenceEvents.length){
+  const lengthMeters=Number.isFinite(referenceLengthMeters)&&referenceLengthMeters>0?referenceLengthMeters:(Number(p.spanLength)>0?Number(p.spanLength)*1000:Math.max(...events.map(e=>Number(e.distanceMeters)||0),...referenceEvents.map(e=>Number(e.distanceMeters)||0)));
+  const unused=new Set(events.map((_,i)=>i));
+  const matched=[];
+  for(const ref of referenceEvents){
+   const refMeters=Number.isFinite(ref.distanceMeters)?ref.distanceMeters:eventKm(ref,p)*1000;
+   const target=Math.max(0,lengthMeters-refMeters);
+   let best=-1,bestDelta=Infinity;
+   for(const idx of unused){
+    const e=events[idx],m=Number.isFinite(e.distanceMeters)?e.distanceMeters:eventKm(e,p)*1000;
+    const delta=Math.abs(m-target);
+    if(delta<bestDelta){bestDelta=delta;best=idx;}
+   }
+   if(best>=0){matched.push(events[best]);unused.delete(best);}
+  }
+  events=matched;
+ }
+ // Yokogawa volgt bij ringmetingen de eventindeling van de EXFO-meting.
+ // Alleen de dichtstbijzijnde Yokogawa-eventwaarde wordt aan elke EXFO-positie gekoppeld;
+ // extra trace-detecties worden niet als zelfstandige events geëxporteerd.
+ const manufacturer=String(p.equipment?.manufacturer||p.equipment?.manufacturerName||'').toUpperCase();
+ const isYokogawa=manufacturer.includes('YOKOGAWA')||/YOKOGAWA/i.test(String(p.model||''));
+ if(false&&isYokogawa&&Array.isArray(referenceEvents)&&referenceEvents.length){
+  const totalMeters=Number.isFinite(referenceLengthMeters)&&referenceLengthMeters>0
+   ? referenceLengthMeters
+   : Math.max(...referenceEvents.map(e=>Number.isFinite(e.distanceMeters)?e.distanceMeters:eventKm(e,p)*1000));
+  const available=new Set(events.map((_,i)=>i));
+  const aligned=[];
+  for(const ref of referenceEvents){
+   const refDistance=Number.isFinite(ref.distanceMeters)?ref.distanceMeters:eventKm(ref,p)*1000;
+   const targetDistance=dir==='BA'&&referenceDirection==='AB'?Math.max(0,totalMeters-refDistance):refDistance;
+   let bestIndex=-1,bestDelta=Infinity;
+   for(const idx of available){
+    const candidate=events[idx];
+    const candidateDistance=Number.isFinite(candidate.distanceMeters)?candidate.distanceMeters:eventKm(candidate,p)*1000;
+    const delta=Math.abs(candidateDistance-targetDistance);
+    if(delta<bestDelta){bestDelta=delta;bestIndex=idx;}
+   }
+   // Overlengte kan circa 30 m verschil geven. Bij geen betrouwbare match
+   // behouden we de EXFO-eventpositie, maar vullen we geen Yokogawa-waarde in.
+   if(bestIndex>=0&&bestDelta<=40&&targetDistance>0){
+    const matched={...events[bestIndex],distanceMeters:targetDistance,referenceDistanceMeters:targetDistance};
+    aligned.push(matched);available.delete(bestIndex);
+   }else{
+    aligned.push({num:ref.num,time:ref.time,distanceMeters:targetDistance,att:NaN,loss:0,refl:NaN,code:ref.code||'0T',tech:'EXFO-REFERENTIE',markers:[],markerDistances:[],referenceOnly:true});
+   }
+  }
+  events=aligned;
+ }
+ // Sorteer events in de volgorde van de meetrichting. Bij A-B loopt de afstand
+ // op vanaf 0; bij B-A loopt de afstand af vanaf de totale meetlengte.
+ // Zo blijven eventafstand, demping en reflectie als één geheel gekoppeld.
+ events=events.slice().sort((a,b)=>{
+  const da=Number.isFinite(a.distanceMeters)?a.distanceMeters:eventKm(a,p)*1000;
+  const db=Number.isFinite(b.distanceMeters)?b.distanceMeters:eventKm(b,p)*1000;
+  return dir==='BA'?db-da:da-db;
+ });
+ // Yokogawa heeft vaak geen KeyEvents-blok. Lees per EXFO-referentiepositie
+ // de lokale stap uit de volledige Yokogawa-trace. Zoek binnen +/-40 m vanwege
+ // overlengte/positioneringsverschil en maak meetvensters schaalafhankelijk
+ // van de sampleafstand (de oude vaste vensters van 5-20 m waren te klein).
+ if(isYokogawa&&Array.isArray(p.traceDb)&&Array.isArray(p.tracePositions)&&p.traceDb.length===p.tracePositions.length&&p.traceDb.length>10){
+  const medianTrace=a=>{if(!a.length)return NaN;const z=a.slice().sort((x,y)=>x-y),m=Math.floor(z.length/2);return z.length%2?z[m]:(z[m-1]+z[m])/2;};
+  const dxMeters=Math.abs((p.tracePositions[1]-p.tracePositions[0])*1000);
+  const halfWindow=Math.max(20,Math.min(100,dxMeters*8));
+  const guard=Math.max(5,dxMeters*2);
+  for(const e of events){
+   // Ook een EXFO-referentie zonder gematchte Yokogawa-detectie moet rechtstreeks
+   // in de Yokogawa-trace worden bemeten. Deze overslaan veroorzaakte steeds 0,000.
+   const pos=Number(e.distanceMeters);
+   if(!Number.isFinite(pos)||pos<=0)continue;
+   let best=null;
+   // Zoek de sterkste lokale niveauverandering binnen de toegestane positioneringsmarge.
+   const searchStart=Math.max(guard,pos-40),searchEnd=pos+40;
+   for(let center=searchStart;center<=searchEnd;center+=Math.max(1,dxMeters)){
+    const before=[],after=[];
+    for(let j=0;j<p.tracePositions.length;j++){
+     const m=p.tracePositions[j]*1000,db=Number(p.traceDb[j]);
+     if(!Number.isFinite(db))continue;
+     if(m>=center-halfWindow&&m<=center-guard)before.push(db);
+     else if(m>=center+guard&&m<=center+halfWindow)after.push(db);
+    }
+    const minSamples=Math.max(2,Math.min(5,Math.ceil(halfWindow/Math.max(dxMeters,0.1)/3)));
+    if(before.length>=minSamples&&after.length>=minSamples){
+     const delta=medianTrace(before)-medianTrace(after);
+     if(Number.isFinite(delta)&&Math.abs(delta)<10&&(!best||Math.abs(delta)>Math.abs(best.delta))){
+      best={delta,center};
+     }
+    }
+   }
+   if(best){
+    e.loss=Math.round(best.delta*1000)/1000;
+    e.traceMeasured=true;
+   }else if(e.referenceOnly){
+    e.loss=0; // Geen meetbare overgang op deze theoretische positie.
+    e.traceMeasured=false;
+   }
+  }
+ }
+ const sourceEvents=events.slice();
+ // De eventtijden in een B-A-SOR zijn al gemeten vanaf locatie B.
+ // De B-A-meetwaarden worden gekoppeld aan de fysieke eventlocaties uit A-B.
+ // Bij traces zonder KeyEvents gebruiken we het PDF-kabelschema als onafhankelijke referentie.
+ // Alleen de dichtstbijzijnde trace-overgang per verwachte locatie wordt als event opgenomen.
+ // Dit voorkomt dat ruisfluctuaties als tientallen extra events in het rapport verschijnen.
+ const matchToleranceMeters=25;
+ // Gebruik de events die daadwerkelijk uit het SOR-bestand zijn gehaald.
+ // De PDF is alleen de locatie-/trajectreferentie; een afwijkende afstand mag
+ // een SOR-event nooit uit de B-A- of A-B-meting wegfilteren.
+ const unmatchedExpected=[];
+ const cols=Array.from({length:maxCols},(_,i)=>5+i);
+ const eventCount=Math.min(events.length,maxCols);
+ const totalCol=5+eventCount;
+ // De meters uit SOR komen in de rij Sectie A-B / Sectie B-A. De oorspronkelijke afstandsrij blijft behouden.
+ const distanceRows=[sectionRow];
+ // Zet het eventnummer in dezelfde rij als de linknaam, direct boven de eventkolom.
+ // Nummering is altijd 01, 02, 03 ... en volgt de volgorde waarin de events in het rapport staan.
+ for(const col of cols){
+  ws.getCell(distanceRow,col).value=null;
+  for(const row of [...distanceRows,lossRow,reflRow]){
+   const cell=ws.getCell(row,col);cell.value=null;
+   if(cell.fill&&cell.fill.fgColor&&String(cell.fill.fgColor.argb||'').toUpperCase()==='FFFF0000')cell.fill={type:'pattern',pattern:'none'};
+   if(cell.font&&cell.font.color&&String(cell.font.color.argb||'').toUpperCase()==='FFFFFFFF')cell.font={...(cell.font||{}),color:{theme:1}};
+  }
+ }
+ // Afsluitende kolom na alle events: totale demping van de volledige meettrace.
+ ws.getCell(distanceRow,totalCol).value=null;
+ for(const row of [...distanceRows,lossRow,reflRow]) ws.getCell(row,totalCol).value=null;
+ ws.getCell(distanceRow,totalCol).value='';
+ ws.getCell(sectionRow,totalCol).value='Totale demping';
+ ws.getCell(sectionRow,totalCol).font={...(ws.getCell(sectionRow,totalCol).font||{}),bold:true};
+ if(Number.isFinite(totalLossDb)&&totalLossDb>0){
+  ws.getCell(lossRow,totalCol).value=Math.round(totalLossDb*1000)/1000;
+  ws.getCell(lossRow,totalCol).numFmt='0.000';
+ }
+ let filled=0;
+ events.slice(0,maxCols).forEach((e,i)=>{
+  const col=cols[i],meters=Math.round(Number.isFinite(e.distanceMeters)?e.distanceMeters:eventKm(e,p)*1000); // De eventafstand komt altijd uit de SOR; de PDF is alleen de referentie.
+  const eventLabel=String(i+1).padStart(2,'0');
+  ws.getCell(distanceRow,col).value=eventLabel;
+  ws.getCell(distanceRow,col).numFmt='@';
+  for(const row of distanceRows){
+   const distanceCell=ws.getCell(row,col);
+   distanceCell.value=Math.round(meters);
+   distanceCell.numFmt='0';
+  }
+  const lossCell=ws.getCell(lossRow,col),reflectanceCell=ws.getCell(reflRow,col);
+  // Geen overeenkomstig SOR-event op deze theoretische eventpositie: vul expliciet 0,000 dB in.
+  lossCell.value=e.referenceOnly?0:(Number.isFinite(Number(e.loss))?Math.round(Number(e.loss)*1000)/1000:null);
+  const refl=Number(e.refl);reflectanceCell.value=Number.isFinite(refl)?(refl===0?'NM':Math.round(refl*10)/10):null;
+  // Beoordeel de werkelijke SOR-reflectiewaarde aan de hand van het type
+  // aansluiting in rij 32 van dezelfde eventkolom. Negatiever is beter.
+  const connectorType=String(ws.getCell(32,col).value||'').trim().toUpperCase();
+  if(typeof reflectanceCell.value==='number' && Number.isFinite(refl)){
+   let limit=null;
+   if(connectorType.includes('APC')) limit=-60;
+   else if(connectorType.includes('PC')) limit=-48;
+   if(limit!==null){
+    reflectanceCell.fill={
+     type:'pattern',pattern:'solid',
+     fgColor:{argb:refl<=limit?'FF92D050':'FFFF6666'}
+    };
+   }
+  }
+  if(typeof lossCell.value==='number')lossCell.numFmt='0.000';
+  if(typeof reflectanceCell.value==='number')reflectanceCell.numFmt='0.0';
+  filled++;
+ });
+ return {filled,available:sourceEvents.length,unmatched:sourceEvents.length>maxCols?sourceEvents.slice(maxCols).map(e=>e.num):[],unmatchedExpected,distanceRow,sectionRow,lossRow,reflRow};
+}
+function getLinkNameFromSor(fileName){
+ let base=String(fileName||'').replace(/\.sor$/i,'').trim();
+ // Verwijder richting en alle meetinstellingen die daarachter staan.
+ base=base.replace(/[\s_-]*(?:A[\s_-]*B|B[\s_-]*A)[\s_-].*$/i,'');
+ // SOR-bestanden kunnen beginnen met een meetvolgnummer, bijvoorbeeld 001_.
+ base=base.replace(/^\d{1,4}(?=[\s_-])[\s_-]+/,'');
+ // In de linkbenaming worden de losse naamdelen met koppeltekens geschreven.
+ base=base.replace(/_+/g,'-').replace(/\s+/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'');
+ return base;
+}
+function getVersionNumber(fileName){
+ const stem=String(fileName||'').replace(/\.sor$/i,'').trim();
+ // Versienummer staat soms als v11, maar ook als los volgnummer vooraan: '11 GDM-...'.
+ const m=stem.match(/^(?:v\s*)?(0?[2-9]|1[0-2])(?=$|[\s_-])/i);
+ return m?Number(m[1]):null;
+}
+function getVersionLinkName(fileName,wl){
+ let stem=String(fileName||'').replace(/\.sor$/i,'').trim();
+ // Haal alleen het vooraanstaande meetvolgnummer v02-v12 weg; laat cijfers in de linknaam intact.
+ stem=stem.replace(/^(?:v\s*)?(?:0?[2-9]|1[0-2])(?=$|[\s_-])[\s_-]*/i,'');
+ stem=stem.replace(/(?:[_\s-]+)(?:1310|1550|1625)(?:\s*nm)?(?:[_\s-].*)?$/i,'');
+ stem=stem.replace(/^[\s_-]+|[\s_-]+$/g,'').replace(/[_\s]+/g,'-').replace(/-+/g,'-');
+ return stem+'_'+wl;
+}
+function writeVersionMeasurements(ws,records){
+ const starts={1310:95,1550:109,1625:123};
+ const seen=new Set();let written=0;const warnings=[];
+ for(const rec of records){
+  const start=starts[rec.wl];if(!start)throw Error('Onbekende golflengte voor '+rec.fileName);
+  if(rec.version<2||rec.version>12)throw Error('Versienummer buiten v02 t/m v12: '+rec.fileName);
+  const key=rec.wl+'_'+rec.version;
+  if(seen.has(key))throw Error('Dubbele meting voor v'+String(rec.version).padStart(2,'0')+' / '+rec.wl+' nm.');
+  seen.add(key);
+  const row=start+(rec.version-2);
+  ws.getCell(row,3).value=rec.linkName;
+  const loss=Number(rec.lossDb);
+  ws.getCell(row,5).value=Number.isFinite(loss)?Math.round(loss*1000)/1000:null;
+  ws.getCell(row,5).numFmt='0.000';
+  if(!Number.isFinite(loss))warnings.push(rec.fileName+': totale demping ontbreekt in het SOR-bestand.');
+  written++;
+ }
+ return {written,warnings};
+}
+function identifySorFile(file,parsed){
+ const name=file.name;
+ // De golflengte komt uit FxdParams.actualWavelength in het SOR-bestand,
+ // niet uit de bestandsnaam.
+ const raw=Number(parsed.actualWavelength)||0;
+ const actual=raw>2000?raw/10:(raw||Number(parsed.nominalWavelength));
+ const candidates=[1310,1550,1625];
+ const wl=candidates.reduce((best,x)=>Math.abs(x-actual)<Math.abs(best-actual)?x:best,candidates[0]);
+ if(!actual||Math.abs(actual-wl)>25)throw Error(file.name+': onbekende golflengte in SOR-bestand ('+actual+' nm).');
+ const directionName=String(name).replace(/\.sor$/i,'').toUpperCase().replace(/[()]/g,'_');
+ let dir=null, directionSource='';
+ // Bij de HLM-LC0001/HLM-S17681-set is de meetrichting expliciet bevestigd:
+ // bestanden met prefix '1 HLM-' zijn A-B; bestanden met prefix '0019 - HLM-' zijn B-A.
+ // Deze regel staat vóór de algemene A/B-detectie omdat de prefixnummers zelf geen richting aangeven.
+ if(/^1\s+HLM-LC0001.*HLM-S17681/i.test(String(name))){
+  dir='AB'; directionSource='bevestigde HLM-bestandsreeks (prefix 1 = A-B)';
+ }else if(/^0019\s*-\s*HLM-LC0001.*HLM-S17681/i.test(String(name))){
+  dir='BA'; directionSource='bevestigde HLM-bestandsreeks (prefix 0019 = B-A)';
+ }else if(/(?:^|[^A-Z0-9])B[\s_-]*A(?:[^A-Z0-9]|$)/.test(directionName) || /(?:^|[^A-Z0-9])BA(?:[^A-Z0-9]|$)/.test(directionName)){
+  dir='BA'; directionSource='A-B/B-A in bestandsnaam';
+ }else if(/(?:^|[^A-Z0-9])A[\s_-]*B(?:[^A-Z0-9]|$)/.test(directionName) || /(?:^|[^A-Z0-9])AB(?:[^A-Z0-9]|$)/.test(directionName)){
+  dir='AB'; directionSource='A-B/B-A in bestandsnaam';
+ }else{
+  // Sommige bestandsnamen eindigen met de link-/meetlocatiecode LINK...A of LINK...B,
+  // bijvoorbeeld LINK311A_1310nm.SOR. Een afsluitende A betekent meten vanaf
+  // locatie A (A-B); een afsluitende B betekent meten vanaf locatie B (B-A).
+  // Verwijder eerst golflengte- en meetinstellingen achter het laatste naamdeel.
+  const stem=directionName.replace(/(?:[_\s-]+)(?:1310|1550|1625)(?:NM)?(?:[_\s-].*)?$/,'').trim();
+  const lastPart=stem.split(/[_\s-]+/).filter(Boolean).pop()||'';
+  const suffix=lastPart.match(/([AB])$/);
+  if(suffix){dir=suffix[1]==='A'?'AB':'BA';directionSource='laatste A/B van linkcode in bestandsnaam';}
+  else {
+   // Ondersteun ook een los A- of B-label als apart naamdeel.
+   const tokens=directionName.split(/[^A-Z0-9]+/).filter(Boolean);
+   const hasA=tokens.includes('A'), hasB=tokens.includes('B');
+   if(hasA!==hasB){dir=hasA?'AB':'BA';directionSource='los A/B-label in bestandsnaam';}
+  }
+ }
+ return {wl,dir,actual,directionSource};
+}
+
+function getFilenameFiberNumber(fileName){
+ // Accepteer V1 t/m V96 (ook v17), en numerieke bestandsnamen zoals
+ // 17.SOR, 0056.SOR, 0017_bestand.SOR of 0056_ASD-..._1550nm.SOR.
+ // Strip eerst de extensie: bij 0056.SOR moet 56 als vezelnummer worden gelezen.
+ const name=String(fileName||'').trim().replace(/\.sor$/i,'');
+ // Gebruik expliciete V-codes waar die aanwezig zijn.
+ let match=name.match(/(?:^|[^A-Z0-9])V0*(\d{1,2})(?=$|[^0-9])/i);
+ let rawNumber=match?match[1]:null;
+ // Anders uitsluitend het eerste nummerdeel aan het begin van de bestandsnaam.
+ // Zo wordt LINK311A nooit aangezien voor vezel 31 of 11.
+ if(rawNumber===null){
+  match=name.match(/^0*(\d{1,2})(?=$|[^0-9])/);
+  if(match)rawNumber=match[1];
+ }
+ if(rawNumber===null)return null;
+ const number=Number(rawNumber);
+ return number>=1&&number<=96?{number,label:'V'+number}:null;
+}
+function getFiberNumber(fileName){
+ const name=String(fileName||'').trim().replace(/\.sor$/i,'');
+ // Accepteer zowel 001_bestand.SOR als alleen een nummer, bijvoorbeeld 0002.SOR.
+ // Voorloopnullen zijn opmaak: 001 = vezel 1 en 0002 = vezel 2.
+ let m=name.match(/^0*(\d{1,2})(?=$|[(_\s-])/);
+ // Als het nummer niet vooraan staat, zoek dan ook naar een los nummerdeel.
+ if(!m)m=name.match(/(?:^|[_\s-])0*(\d{1,2})(?=$|[(_\s-])/);
+ if(!m) return null;
+ const n=Number(m[1]);
+ return n>=1&&n<=96?n:null;
+}
+function copyExcelRowStyle(ws, sourceRow, targetRow){
+ const source=ws.getRow(sourceRow), target=ws.getRow(targetRow);
+ target.height=source.height;
+ for(let c=1;c<=27;c++){
+  const a=source.getCell(c),b=target.getCell(c);
+  if(a.hasStyle)b.style=JSON.parse(JSON.stringify(a.style));
+  if(a.numFmt)b.numFmt=a.numFmt;
+  if(a.alignment)b.alignment=JSON.parse(JSON.stringify(a.alignment));
+  if(a.border)b.border=JSON.parse(JSON.stringify(a.border));
+ }
+}
+function fillOtdrWorkSheet(wb, connectionRecords){
+ const ws=wb.getWorksheet('otdr uitwerksheet 1310 1550');
+ if(!ws)throw Error('Werkblad otdr uitwerksheet 1310 1550 niet gevonden.');
+ const fibers=[...new Set(connectionRecords.map(r=>Number(r.fiber)))].sort((a,b)=>a-b);
+ const get=(fiber,dir,wl)=>connectionRecords.find(r=>Number(r.fiber)===fiber&&r.dir===dir&&Number(r.wl)===wl);
+ // Haal de volledige linknaam en beide locaties uit de SOR-bestandsnaam.
+ // Voorbeeld: 0017_ASD-TR0021-HVS-RC0002-LINK311A_1310nm.SOR
+ const firstFile=connectionRecords[0]?.file||'';
+ let stem=String(firstFile).replace(/\.sor$/i,'').replace(/^\d{1,4}[_\s-]+/,'');
+ stem=stem.replace(/[_\s-]+(?:1310|1550|1625)(?:nm)?(?:[_\s-].*)?$/i,'');
+ const linkMatch=stem.match(/^(.*?)(?:[_\s-])?(LINK\d+[A-Z]?)(?:$|[_\s-])/i);
+ let fullLink='',locationA='',locationB='';
+ if(linkMatch){
+  const prefix=linkMatch[1].replace(/[-_\s]+$/,'');
+  const linkCode=linkMatch[2].replace(/[AB]$/i,'');
+  fullLink=(prefix?prefix+'-':'')+linkCode.toUpperCase();
+  const locMatch=prefix.match(/^([A-Z]{2,8}-[A-Z0-9]+)-([A-Z]{2,8}-[A-Z0-9]+)$/i);
+  if(locMatch){locationA=locMatch[1].toUpperCase();locationB=locMatch[2].toUpperCase();}
+ }
+ if(fullLink)ws.getCell('B1').value=fullLink;
+ // De uitwerksheet gebruikt twee regels per verbinding: A-B en daaronder B-A.
+ // Op de retourregel worden locaties en vezelnummers omgedraaid.
+ fibers.forEach((fiber,index)=>{
+  const abRow=4+index*2, baRow=abRow+1;
+  if(abRow>4){copyExcelRowStyle(ws,4,abRow);copyExcelRowStyle(ws,5,baRow);}
+  const ab1310=get(fiber,'AB',1310), ba1310=get(fiber,'BA',1310);
+  const ab1550=get(fiber,'AB',1550), ba1550=get(fiber,'BA',1550);
+  const anyAB=ab1310||ab1550, anyBA=ba1310||ba1550;
+  const bFiber=Number((ba1310||ba1550)?.sourceFiber?.replace(/^V/i,''))||Number((anyAB?.pairedFiber)||fiber);
+  ws.getCell('B'+abRow).value=locationA||ws.getCell('B'+abRow).value;
+  ws.getCell('G'+abRow).value=locationB||ws.getCell('G'+abRow).value;
+  ws.getCell('B'+baRow).value=locationB||ws.getCell('B'+baRow).value;
+  ws.getCell('G'+baRow).value=locationA||ws.getCell('G'+baRow).value;
+  ws.getCell('F'+abRow).value=fiber;
+  ws.getCell('K'+abRow).value=bFiber;
+  ws.getCell('F'+baRow).value=bFiber;
+  ws.getCell('K'+baRow).value=fiber;
+  const directionalLink=dir=>fullLink?fullLink+(dir==='AB'?'a':'b'):'';
+  ws.getCell('N'+abRow).value=directionalLink('AB')||ws.getCell('N'+abRow).value;
+  ws.getCell('N'+baRow).value=directionalLink('BA')||ws.getCell('N'+baRow).value;
+  // Kolom M krijgt exact dezelfde linkbenaming als kolom N.
+  ws.getCell('M'+abRow).value=ws.getCell('N'+abRow).value;
+  ws.getCell('M'+baRow).value=ws.getCell('N'+baRow).value;
+  const fillDirection=(row,r1310,r1550)=>{
+   const lengths=[r1310,r1550].filter(r=>r&&Number.isFinite(r.lengthMeters)&&r.lengthMeters>0).map(r=>r.lengthMeters);
+   if(lengths.length){ws.getCell('P'+row).value=Math.round(lengths.reduce((a,b)=>a+b,0)/lengths.length)/1000;ws.getCell('P'+row).numFmt='0.000';}
+   if(r1310&&Number.isFinite(r1310.lossDb))ws.getCell('Q'+row).value=Math.round(r1310.lossDb*1000)/1000;
+   if(r1550&&Number.isFinite(r1550.lossDb))ws.getCell('R'+row).value=Math.round(r1550.lossDb*1000)/1000;
+  };
+  fillDirection(abRow,ab1310,ab1550);
+  fillDirection(baRow,ba1310,ba1550);
+ });
+ return {sheet:ws,rows:fibers.length*2,fibers,fullLink,locationA,locationB};
+}
+function fillConnectionMeasurements(ws, records, dateText){
+ // Tabblad Meetrapportage Verbinding: vezel 1 t/m 96 op rijen 19 t/m 114.
+ // Per golflengte: vezel A, afstand A-B, demping A-B, gemiddelde,
+ // demping B-A, afstand B-A, vezel B.
+ const wavelengthBlocks={
+  1310:{fiberA:1,abDistance:2,abLoss:3,average:4,baLoss:5,baDistance:6,fiberB:7},
+  1550:{fiberA:9,abDistance:10,abLoss:11,average:12,baLoss:13,baDistance:14,fiberB:15},
+  1625:{fiberA:17,abDistance:18,abLoss:19,average:20,baLoss:21,baDistance:22,fiberB:23}
+ };
+ const byFiber=new Map();
+ for(const rec of records){
+  const wl=Number(rec.wl), cols=wavelengthBlocks[wl];
+  if(!cols)throw Error('Onbekende golflengte '+rec.wl+' nm voor vezel '+rec.fiber+'. Alleen 1310, 1550 en 1625 nm worden ondersteund.');
+  if(!byFiber.has(rec.fiber))byFiber.set(rec.fiber,{});
+  const entry=byFiber.get(rec.fiber);
+  if(!entry[wl])entry[wl]={};
+  if(entry[wl][rec.dir])throw Error('Er zijn twee SOR-bestanden geselecteerd voor vezel '+rec.fiber+' richting '+(rec.dir==='AB'?'A-B':'B-A')+' bij '+wl+' nm.');
+  entry[wl][rec.dir]=rec;
+ }
+ // Meetdatum en gegevens van de twee meetkanten afzonderlijk invullen.
+ // A-B is locatie A; B-A is locatie B. SOR bevat geen betrouwbare firma- of SECT-gegevens.
+ const sideRecord={A:records.find(r=>r.dir==='AB'),B:records.find(r=>r.dir==='BA')};
+ // Locatienamen uit de SOR-header automatisch in rij 17 zetten.
+ // De cellen zijn per golflengte samengevoegd: A17/E17, I17/M17 en Q17/U17.
+ const locationSource=records.find(r=>String(r.locA||'').trim()||String(r.locB||'').trim())||null;
+ if(locationSource){
+  const locA=String(locationSource.locA||'').trim();
+  const locB=String(locationSource.locB||'').trim();
+  for(const cell of ['A17','I17','Q17']) ws.getCell(cell).value=locA||null;
+  for(const cell of ['E17','M17','U17']) ws.getCell(cell).value=locB||null;
+ }
+ const equipmentFields=[['manufacturer',6],['model',7],['hardware1',8],['hardware2',9],['serial',10],['software',11]];
+ for(const side of ['A','B']){
+  const rec=sideRecord[side];
+  const valueCol=side==='A'?4:12; // D voor kant A, L voor kant B (nieuw sjabloon VZ(7))
+  const dateCell=side==='A'?'D1':'L1';
+  ws.getCell(dateCell).value=rec?.measurementDate||dateText||null;
+  ws.getCell(valueCol,4).value=rec?.operator||null; // naam meettechnicus
+  for(const [field,row] of equipmentFields){
+   ws.getCell(row,valueCol).value=String(rec?.equipment?.[field]||'').trim()||null;
+  }
+ }
+ let written=0, warnings=[];
+ for(const [fiber,wavelengths] of [...byFiber.entries()].sort((a,b)=>a[0]-b[0])){
+  const row=fiber+18; // vezel 1 staat op rij 19
+  for(const [wlText,dirs] of Object.entries(wavelengths)){
+   const wl=Number(wlText), cols=wavelengthBlocks[wl], ab=dirs.AB, ba=dirs.BA;
+   const aFiber=ab?.fiber ?? fiber;
+   const bFiber=ab?.pairedFiber ?? ba?.pairedFiber ?? ba?.sourceFiberNumber ?? null;
+   ws.getCell(row,cols.fiberA).value=aFiber;
+   if(bFiber!==null&&bFiber!==undefined)ws.getCell(row,cols.fiberB).value=bFiber;
+   if(ab){
+    ws.getCell(row,cols.abDistance).value=Number.isFinite(ab.lengthMeters)&&ab.lengthMeters>0?Math.round(ab.lengthMeters):null;
+    ws.getCell(row,cols.abLoss).value=Number.isFinite(ab.lossDb)&&ab.lossDb>0?Math.round(ab.lossDb*1000)/1000:null;
+   }
+   if(ba){
+    ws.getCell(row,cols.baLoss).value=Number.isFinite(ba.lossDb)&&ba.lossDb>0?Math.round(ba.lossDb*1000)/1000:null;
+    ws.getCell(row,cols.baDistance).value=Number.isFinite(ba.lengthMeters)&&ba.lengthMeters>0?Math.round(ba.lengthMeters):null;
+   }
+   const a=ab&&Number.isFinite(ab.lossDb)&&ab.lossDb>0?ab.lossDb:null;
+   const b=ba&&Number.isFinite(ba.lossDb)&&ba.lossDb>0?ba.lossDb:null;
+   ws.getCell(row,cols.average).value=a!==null&&b!==null?Math.round(((a+b)/2)*1000)/1000:(a!==null?a:(b!==null?b:null));
+   for(const col of [cols.abDistance,cols.baDistance])ws.getCell(row,col).numFmt='0';
+   for(const col of [cols.abLoss,cols.baLoss,cols.average])ws.getCell(row,col).numFmt='0.000';
+   if((ab&&!Number.isFinite(ab.lossDb))||(ba&&!Number.isFinite(ba.lossDb)))warnings.push('Vezel '+fiber+' ('+wl+' nm): demping ontbreekt in een of beide SOR-bestanden.');
+   written++;
+  }
+ }
+ return {written,warnings};
+}
+function writeRingMeasurements(ws,records){
+ // Ringoverzicht: R vezelnummer, S afstand A-B, T demping A-B,
+ // U afstand B-A, V demping B-A, X gemiddelde demping.
+ const headers={18:'Vezelnummer',19:'Afstand A-B (m)',20:'Demping A-B (dB)',21:'Afstand B-A (m)',22:'Demping B-A (dB)',24:'Gemiddelde demping (dB)'};
+ for(const [col,label] of Object.entries(headers)){
+  const cell=ws.getCell(1,Number(col));
+  if(cell.value===null||cell.value===undefined||cell.value==='')cell.value=label;
+ }
+ const byFiber=new Map();
+ for(const rec of records){
+  if(!byFiber.has(rec.fiber))byFiber.set(rec.fiber,{});
+  byFiber.get(rec.fiber)[rec.dir]=rec;
+ }
+ let written=0,missing=[];
+ for(const [fiber,dirs] of [...byFiber.entries()].sort((a,b)=>a[0]-b[0])){
+  const row=fiber+1;
+  ws.getCell(row,18).value=fiber;
+  const ab=dirs.AB,ba=dirs.BA;
+  if(ab){
+   ws.getCell(row,19).value=Number.isFinite(ab.lengthMeters)&&ab.lengthMeters>0?Math.round(ab.lengthMeters):null;
+   ws.getCell(row,20).value=Number.isFinite(ab.lossDb)&&ab.lossDb>0?Math.round(ab.lossDb*1000)/1000:null;
+  }
+  if(ba){
+   ws.getCell(row,21).value=Number.isFinite(ba.lengthMeters)&&ba.lengthMeters>0?Math.round(ba.lengthMeters):null;
+   ws.getCell(row,22).value=Number.isFinite(ba.lossDb)&&ba.lossDb>0?Math.round(ba.lossDb*1000)/1000:null;
+  }
+  const a=ab&&Number.isFinite(ab.lossDb)&&ab.lossDb>0?ab.lossDb:null;
+  const b=ba&&Number.isFinite(ba.lossDb)&&ba.lossDb>0?ba.lossDb:null;
+  ws.getCell(row,24).value=a!==null&&b!==null?Math.round(((a+b)/2)*1000)/1000:(a!==null?a:(b!==null?b:null));
+  for(const col of [19,21])ws.getCell(row,col).numFmt='0';
+  for(const col of [20,22,24])ws.getCell(row,col).numFmt='0.000';
+  if((ab&&!(Number.isFinite(ab.lossDb)&&ab.lossDb>0))||(ba&&!(Number.isFinite(ba.lossDb)&&ba.lossDb>0)))missing.push('Vezel '+fiber+': demping ontbreekt in een of beide SOR-bestanden.');
+  written++;
+ }
+ return {written,missing};
+}
+
+// Drie invoervakken: eventmetingen vanaf A, eventmetingen vanaf B en eenvoudige v02-v12-metingen.
+const sorBuckets={eventsA:[],eventsB:[],totals:[]};
+function addSorFiles(bucket,fileList){
+ const incoming=[...fileList].filter(f=>/\.sor$/i.test(f.name));
+ for(const f of incoming){
+  const duplicate=sorBuckets[bucket].some(x=>x.name===f.name&&x.size===f.size&&x.lastModified===f.lastModified);
+  if(!duplicate)sorBuckets[bucket].push(f);
+ }
+ renderSorLists();
+}
+function renderSorLists(){
+ for(const [bucket,id] of [['eventsA','eventAList'],['eventsB','eventBList'],['totals','totalList']]){
+  const container=$(id), list=sorBuckets[bucket];
+  container.replaceChildren();
+  if(!list.length){container.textContent='Nog geen bestanden toegevoegd.';continue;}
+  list.forEach((file,index)=>{
+   const row=document.createElement('div'); row.className='fileitem';
+   const name=document.createElement('span'); name.textContent=(index+1)+'. '+file.name;
+   const remove=document.createElement('button'); remove.type='button'; remove.className='removeFile'; remove.textContent='Verwijderen';
+   remove.setAttribute('aria-label','Verwijder '+file.name);
+   remove.addEventListener('click',()=>{sorBuckets[bucket].splice(index,1);renderSorLists();});
+   row.append(name,remove); container.appendChild(row);
+  });
+ }
+}
+for(const [bucket,inputId,zoneId] of [['eventsA','eventAFiles','eventAZone'],['eventsB','eventBFiles','eventBZone'],['totals','totalFiles','totalZone']]){
+ $(inputId).addEventListener('change',e=>addSorFiles(bucket,e.target.files));
+ const zone=$(zoneId);
+ zone.addEventListener('dragover',e=>{e.preventDefault();zone.classList.add('dragover');});
+ zone.addEventListener('dragleave',()=>zone.classList.remove('dragover'));
+ zone.addEventListener('drop',e=>{e.preventDefault();zone.classList.remove('dragover');addSorFiles(bucket,e.dataTransfer.files);});
+}
+
+$('clearAll').addEventListener('click',()=>{
+ const hasSor=sorBuckets.eventsA.length||sorBuckets.eventsB.length||sorBuckets.totals.length;
+ if(!hasSor&&!$('reportType').value){
+  $('status').className='status';
+  $('status').textContent='Er zijn geen SOR-bestanden of meettype om te wissen. De gekozen Excel-meetrapportage blijft behouden.';
+  return;
+ }
+ if(!confirm('Alle toegevoegde SOR-bestanden en de gekozen meetsoort wissen? Het geselecteerde Excel-meetrapport blijft staan.'))return;
+ sorBuckets.eventsA.length=0;
+ sorBuckets.eventsB.length=0;
+ sorBuckets.totals.length=0;
+ $('eventAFiles').value='';
+ $('eventBFiles').value='';
+ $('totalFiles').value='';
+ $('reportType').value='';
+ renderSorLists();
+ $('status').className='status';
+ $('status').textContent='Alle SOR-bestanden en het meettype zijn gewist. Het gekozen Excel-meetrapport is behouden.';
+});
+
+$('cancel').addEventListener('click',()=>{
+ $('reportType').value='';
+ $('status').className='status';
+ $('status').textContent='Verwerking geannuleerd. Kies een rapportagetype om opnieuw te beginnen.';
+});
+$('go').addEventListener('click',async()=>{
+ const status=$('status');
+ try{
+  const xf=$('xlsx').files[0];
+  if(!xf)throw Error('Selecteer eerst het Excelbestand.');
+  const reportType=$('reportType').value;
+  if(!reportType)throw Error('Kies eerst Ringmetingen of Metingen verbindingen.');
+  const ringMode=reportType==='ring';
+  const files=[...sorBuckets.eventsA.map(file=>({file,group:'eventsA'})),...sorBuckets.eventsB.map(file=>({file,group:'eventsB'})),...sorBuckets.totals.map(file=>({file,group:'totals'}))];
+  if(!files.length)throw Error('Voeg minimaal één SOR-bestand toe aan een van de twee vakken.');
+  if(sorBuckets.totals.length&&!ringMode)throw Error('Het vak v02-v12 is bedoeld voor Ringmetingen. Kies Ringmetingen of verplaats deze bestanden naar het vak OTDR met events.');
+  const sheetName=ringMode?'Meetrapportage Ring':'Meetrapportage Verbinding';
+  const wb=new ExcelJS.Workbook();
+  await wb.xlsx.load(await xf.arrayBuffer());
+  const ws=wb.getWorksheet(sheetName);
+  if(!ws)throw Error('Werkblad '+sheetName+' niet gevonden. Controleer of je het juiste Excelbestand hebt geselecteerd.');
+  const done=[],measurements=[],sorLinkNames=[],connectionRecords=[],connectionSourceRecords=[],ringRecords=[],versionRecords=[],equipmentRecords=[],ringSourceRecords=[];
+  let bulkConnectionMode=false;
+  const seen=new Set();
+  let totalFilled=0;
+  const warnings=[];
+
+  for(const item of files){
+   const file=item.file;
+   const parsed=parseSOR(await file.arrayBuffer());
+   if(ringMode) ringSourceRecords.push({parsed,fileName:file.name});
+   // Niet iedere SOR bevat een KeyEvents-blok. Behandel ontbrekende events
+   // als een lege lijst zodat metingen zonder eventgegevens wel verwerkt kunnen worden.
+   if(!Array.isArray(parsed.events)) parsed.events=[];
+   const identified=identifySorFile(file,parsed);
+   let {wl,dir,actual}=identified;
+   // De gekozen dropzone is leidend voor de richting van eventmetingen.
+   if(item.group==='eventsA')dir='AB';
+   else if(item.group==='eventsB')dir='BA';
+   const version=getVersionNumber(file.name);
+   if(ringMode && item.group==='totals'){ 
+    if(version===null)throw Error('In het vak v02-v12 staat een bestand zonder versienummer v02 t/m v12: '+file.name+'.');
+    let lossDb=Number(parsed.spanLoss);
+    if(!(Number.isFinite(lossDb)&&lossDb>0) && Number.isFinite(parsed.traceLossDb)&&parsed.traceLossDb>0)lossDb=Number(parsed.traceLossDb);
+    const linkName=getVersionLinkName(file.name,wl);
+    versionRecords.push({version,wl,fileName:file.name,linkName,lossDb,parsed});
+    sorLinkNames.push(linkName);
+    equipmentRecords.push({...parsed,fileName:file.name,wl,dir:null});
+    done.push('v'+String(version).padStart(2,'0')+' / '+wl+' nm: '+file.name+' — totale demping '+(Number.isFinite(lossDb)?lossDb.toFixed(3)+' dB':'niet beschikbaar')+'.');
+    continue;
+   }
+   if(!dir)throw Error('De meetrichting van '+file.name+' is onbekend. Sleep dit SOR-bestand naar het vak Locatie A naar B of Locatie B naar A.');
+   equipmentRecords.push({...parsed,fileName:file.name,wl,dir});
+   const lengthMeters=Number(parsed.spanLength)*1000;
+   measurements.push({wl,dir,file:file.name,lengthMeters});
+   sorLinkNames.push(getLinkNameFromSor(file.name));
+   let lossDb=Number(parsed.spanLoss);
+   if(!(Number.isFinite(lossDb)&&lossDb>0)&&parsed.events&&parsed.events.length){
+    const endIdx=parsed.events.findIndex(e=>e.code&&e.code[1]==='E');
+    const ev=parsed.events.slice(0,endIdx>=0?endIdx+1:parsed.events.length);
+    const sum=ev.reduce((acc,e)=>acc+(Number(e.loss)||0),0);
+    if(sum>0)lossDb=sum;
+   }
+   if(ringMode){
+    const key=wl+'_'+dir;
+    if(seen.has(key)){
+     const earlier=ringRecords.find(r=>r.wl===wl&&r.dir===dir);
+     const oldExfo=/EXFO/i.test(String(earlier?.parsed.equipment?.manufacturer||''));
+     const oldYoko=/YOKOGAWA/i.test(String(earlier?.parsed.equipment?.manufacturer||''));
+     const newExfo=/EXFO/i.test(String(parsed.equipment?.manufacturer||''));
+     const newYoko=/YOKOGAWA/i.test(String(parsed.equipment?.manufacturer||''));
+     if(!((oldExfo&&newYoko)||(oldYoko&&newExfo)))throw Error('Meerdere SOR-bestanden voor '+wl+' nm '+(dir==='AB'?'A-B':'B-A')+'. Alleen een EXFO + Yokogawa referentiepaar is toegestaan.');
+    }
+    seen.add(key);
+    ringRecords.push({parsed,wl,dir,fileName:file.name});
+   }else{
+    const fiberInfo=getFilenameFiberNumber(file.name);
+    if(fiberInfo===null)throw Error('Kan het vezelnummer niet uitlezen uit de bestandsnaam '+file.name+'. De bestandsnaam moet een vezelcode bevatten zoals V18.');
+    // De vezelidentificatie komt uit het SOR-bestand. De dropzone bepaalt of dit
+    // de vezel aan locatie A (A-B) of locatie B (B-A) is.
+    connectionSourceRecords.push({sourceFiber:fiberInfo,dir,wl,lengthMeters,lossDb,file:file.name,operator:parsed.operator,measurementDate:parsed.date,equipment:parsed.equipment,locA:parsed.locA||'',locB:parsed.locB||'',traceDerived:parsed.traceDerived});
+   }
+  }
+
+  if(!ringMode && connectionSourceRecords.length){
+   const aFibers=[...new Map(connectionSourceRecords.filter(r=>r.dir==='AB').map(r=>[r.sourceFiber.number,r.sourceFiber])).values()].sort((a,b)=>a.number-b.number);
+   const bFibers=[...new Map(connectionSourceRecords.filter(r=>r.dir==='BA').map(r=>[r.sourceFiber.number,r.sourceFiber])).values()].sort((a,b)=>a.number-b.number);
+   const bToA=new Map();
+   // Bij een bevestigde bulkverbinding vullen we alleen Meetrapportage Verbinding;
+   // de aparte OTDR-uitwerksheet is bedoeld voor individuele verbindingen.
+   // Eerst identieke vezelnummers automatisch koppelen.
+   for(const aFiber of aFibers){
+    if(bFibers.some(b=>b.number===aFiber.number))bToA.set(aFiber.number,aFiber.number);
+   }
+   // Bulkpatroon herkennen: locatie A 1-48 tegenover locatie B 49-96,
+   // of precies andersom. Vraag dan slechts één keer toestemming.
+   const bNumberSet=new Set(bFibers.map(b=>b.number));
+   const remainingAFibers=aFibers.filter(a=>!bToA.has(a.number));
+   const bulkPlus48=remainingAFibers.length>0&&remainingAFibers.every(a=>a.number>=1&&a.number<=48&&bNumberSet.has(a.number+48));
+   const bulkMinus48=remainingAFibers.length>0&&remainingAFibers.every(a=>a.number>=49&&a.number<=96&&bNumberSet.has(a.number-48));
+   let bulkAccepted=false;
+   if(bulkPlus48||bulkMinus48){
+    const first=bulkPlus48?'V'+remainingAFibers[0].number+' aan V'+(remainingAFibers[0].number+48):'V'+remainingAFibers[0].number+' aan V'+(remainingAFibers[0].number-48);
+    const answer=window.confirm('De geselecteerde SOR-bestanden lijken een bulkverbinding te zijn ('+first+', enz.).\n\nIs dit één verbinding waarbij de vezels automatisch per 48 worden gekoppeld?\n\nKies OK voor automatisch koppelen of Annuleren om de vezels afzonderlijk te koppelen.');
+    if(answer){
+     bulkConnectionMode=true;
+     for(const aFiber of remainingAFibers){
+      const bNumber=bulkPlus48?aFiber.number+48:aFiber.number-48;
+      if(bToA.has(bNumber)&&bToA.get(bNumber)!==aFiber.number)throw Error('Vezel '+bNumber+' van locatie B is al gekoppeld aan een andere vezel van locatie A.');
+      bToA.set(bNumber,aFiber.number);
+     }
+     bulkAccepted=true;
+    }
+   }
+   // Als er geen bulkbevestiging is, blijft de bestaande individuele koppeling beschikbaar.
+   if(!bulkAccepted){
+    for(const aFiber of aFibers){
+     if(bToA.has(aFiber.number))continue;
+     if(!bFibers.length)continue;
+     const choices=bFibers.map(b=>b.label+' (vezel '+b.number+')').join(', ');
+     const answer=window.prompt('Aan welke vezel van locatie B is '+aFiber.label+' van locatie A gelast?\nBeschikbare vezels op locatie B: '+choices+'\n\nVul het vezelnummer van locatie B in:',String(bFibers.length===1?bFibers[0].number:''));
+     if(answer===null)throw Error('Verwerking geannuleerd bij het koppelen van '+aFiber.label+' van locatie A.');
+     const bNumber=Number(String(answer).replace(/[^0-9]/g,''));
+     if(!bFibers.some(b=>b.number===bNumber))throw Error('Vezel '+answer+' is niet aanwezig in de geselecteerde SOR-bestanden van locatie B. Beschikbare vezels: '+bFibers.map(b=>b.number).join(', ')+'.');
+     if(bToA.has(bNumber)&&bToA.get(bNumber)!==aFiber.number)throw Error('Vezel '+bNumber+' van locatie B is al gekoppeld aan een andere vezel van locatie A. Controleer de koppelingen.');
+     bToA.set(bNumber,aFiber.number);
+    }
+   }
+   for(const rec of connectionSourceRecords){
+    let rowFiber;
+    if(rec.dir==='AB')rowFiber=rec.sourceFiber.number;
+    else rowFiber=bToA.get(rec.sourceFiber.number) ?? (aFibers.some(a=>a.number===rec.sourceFiber.number)?rec.sourceFiber.number:null);
+    if(rowFiber===null||rowFiber===undefined)throw Error('Geen koppeling gevonden voor vezel '+rec.sourceFiber.label+' van locatie B. Controleer of de bijbehorende vezel van locatie A is geselecteerd.');
+    const key=rowFiber+'_'+rec.dir+'_'+rec.wl;
+    if(seen.has(key))throw Error('Er zijn twee SOR-bestanden geselecteerd voor vezel '+rowFiber+' richting '+(rec.dir==='AB'?'A-B':'B-A')+' bij '+rec.wl+' nm.');
+    seen.add(key);
+    connectionRecords.push({fiber:rowFiber,sourceFiber:rec.sourceFiber.label,sourceFiberNumber:rec.sourceFiber.number,pairedFiber:rec.dir==='AB'?bToA.get(rowFiber):rec.sourceFiber.number,linkName:getLinkNameFromSor(rec.file),dir:rec.dir,wl:rec.wl,lengthMeters:rec.lengthMeters,lossDb:rec.lossDb,file:rec.file,operator:rec.operator,measurementDate:rec.measurementDate,equipment:rec.equipment,locA:rec.locA,locB:rec.locB});
+    done.push('Locatie '+(rec.dir==='AB'?'A':'B')+' vezel '+rec.sourceFiber.label+' → Excelrij '+rowFiber+' ('+rec.wl+' nm, '+(rec.dir==='AB'?'A-B':'B-A')+'): '+rec.file+' — '+(rec.lengthMeters>0?rec.lengthMeters.toFixed(0)+' m':'afstand niet beschikbaar')+', demping '+(rec.lossDb>0?rec.lossDb.toFixed(3)+' dB':'niet beschikbaar')+(rec.traceDerived?' (berekend uit OTDR-trace)':'')+'.');
+   }
+  }
+
+  if(ringMode && versionRecords.length){
+   const result=writeVersionMeasurements(ws,versionRecords);
+   totalFilled+=result.written;warnings.push(...result.warnings);
+   done.push(result.written+' bestanden uit vak 2 (v02-v12) verwerkt. Kolom C bevat de linknaam en kolom E de totale demping; events zijn niet nodig.');
+  }
+  if(ringMode && ringRecords.length){
+   // Bepaal eerst het grootste aantal events in alle geselecteerde traces.
+   // De bestaande template heeft zeven eventkolommen (E:K); extra events krijgen kolommen vóór de overige rapportagekolommen.
+   const eventCount=r=>{const events=Array.isArray(r.parsed.events)?r.parsed.events:[];const end=events.findIndex(e=>e.code&&e.code[1]==='E');return events.slice(0,end>=0?end+1:events.length).length;};
+   const abEventRecords=ringRecords.filter(r=>r.dir==='AB'&&/EXFO/i.test(String(r.parsed.equipment?.manufacturer||'')));
+   // De A-B-metingen bepalen de fysieke eventindeling. B-A mag nooit extra
+   // eventkolommen toevoegen doordat de OTDR daar extra reflecties detecteert.
+   const eventReferenceRecords=abEventRecords.length?abEventRecords:ringRecords.filter(r=>/EXFO/i.test(String(r.parsed.equipment?.manufacturer||''))).length?ringRecords.filter(r=>/EXFO/i.test(String(r.parsed.equipment?.manufacturer||''))):ringRecords;
+   const maxEvents=Math.max(7,...eventReferenceRecords.map(eventCount));
+   // Eén extra kolom reserveren voor de totale demping, direct na het laatste event.
+   const extraCols=Math.max(0,maxEvents-7)+1;
+   if(extraCols){
+    ws.spliceColumns(12,0,...Array.from({length:extraCols},()=>[]));
+    // Neem de bestaande eventkolomopmaak over voor de nieuw ingevoegde kolommen.
+    for(let c=12;c<12+extraCols;c++){
+     ws.getColumn(c).width=ws.getColumn(11).width;
+     for(let r=1;r<=ws.rowCount;r++){
+      const src=ws.getCell(r,11),dst=ws.getCell(r,c);
+      if(src.hasStyle)dst.style=JSON.parse(JSON.stringify(src.style));
+      if(src.numFmt)dst.numFmt=src.numFmt;
+      if(src.alignment)dst.alignment=JSON.parse(JSON.stringify(src.alignment));
+     }
+    }
+   }
+   for(const rec of ringRecords.filter(r=>{
+    // Bij een EXFO + Yokogawa-paar exporteren we de Yokogawa-rij met EXFO als referentie.
+    return !(/EXFO/i.test(String(r.parsed.equipment?.manufacturer||''))&&ringRecords.some(other=>other!==r&&other.wl===r.wl&&other.dir===r.dir&&/YOKOGAWA/i.test(String(other.parsed.equipment?.manufacturer||''))));
+   })){
+    const recIsYokogawa=/YOKOGAWA/i.test(String(rec.parsed.equipment?.manufacturer||''));
+    // Yokogawa: gebruik de trace-demping na uitsluiting van 1 km voor- en naspan.
+    // EXFO: behoud exact de bestaande SOR-spanLoss/traceLossDb-keuze.
+    const totalLoss=recIsYokogawa&&Number.isFinite(Number(rec.parsed.traceLossDb))
+      ?Number(rec.parsed.traceLossDb)
+      :(Number(rec.parsed.spanLoss)>0?Number(rec.parsed.spanLoss):Number(rec.parsed.traceLossDb));
+    const abRecord=ringRecords.find(r=>r.wl===rec.wl&&r.dir==='AB');
+    const exfoRecord=ringRecords.find(r=>r.wl===rec.wl&&r.dir===rec.dir&&/EXFO/i.test(String(r.parsed.equipment?.manufacturer||'')))||ringRecords.find(r=>r.wl===rec.wl&&/EXFO/i.test(String(r.parsed.equipment?.manufacturer||'')));
+    const referenceRecord=exfoRecord||abRecord;
+    const referenceEvents=referenceRecord?(Array.isArray(referenceRecord.parsed.events)?referenceRecord.parsed.events:[]).slice(0,(()=>{const events=Array.isArray(referenceRecord.parsed.events)?referenceRecord.parsed.events:[];const i=events.findIndex(e=>e.code&&e.code[1]==='E');return i>=0?i+1:events.length;})()):null;
+    const referenceLengthMeters=referenceRecord&&Number(referenceRecord.parsed.spanLength)>0?Number(referenceRecord.parsed.spanLength)*1000:Number(rec.parsed.spanLength)*1000;
+    const isYokogawa=/YOKOGAWA/i.test(String(rec.parsed.equipment?.manufacturer||''));
+    const result=fillDirection(ws,rec.parsed,rec.wl,rec.dir,rec.fileName,maxEvents,totalLoss,null,null,(rec.dir==='BA'||isYokogawa)?referenceEvents:null,referenceLengthMeters,referenceRecord?.dir||null);
+    totalFilled+=result.filled;
+    done.push(rec.wl+' nm '+(rec.dir==='AB'?'A-B':'B-A')+' (rij '+result.distanceRow+', dempingrij '+result.lossRow+'): '+rec.fileName+' — '+result.filled+' eventafstanden gevuld ('+(Array.isArray(rec.parsed.events)?rec.parsed.events:[]).slice(0,result.filled).map(e=>Math.round(Number.isFinite(e.distanceMeters)?e.distanceMeters:eventKm(e,rec.parsed)*1000)+' m').join(', ')+')'+(result.unmatched.length?', '+result.unmatched.length+' events niet geplaatst.':'.')+(result.unmatchedExpected&&result.unmatchedExpected.length?' Waarschuwing: '+result.unmatchedExpected.length+' PDF-eventlocaties hadden geen trace-overgang binnen 25 m.':'')+(Number.isFinite(totalLoss)&&totalLoss>0?' Totale demping '+totalLoss.toFixed(3)+' dB in de afsluitende kolom gezet.':' Totale demping niet beschikbaar in deze SOR-trace.')+(!rec.parsed.hasKeyEvents?' Voorlopige eventposities uit trace; eventverlies en reflectie blijven leeg.':''));
+   }
+   // Herbereken de gemiddelde demping per event voor de drie golflengten.
+   // Als beide richtingen beschikbaar zijn: gemiddelde A-B/B-A; bij één richting: neem die waarde over.
+   const averageRows={1310:{ab:54,ba:59,avg:62},1550:{ab:67,ba:72,avg:75},1625:{ab:80,ba:85,avg:88}};
+   for(const [wl,rows] of Object.entries(averageRows)){
+    for(let col=5;col<5+maxEvents;col++){
+     const a=ws.getCell(rows.ab,col).value;
+     const b=ws.getCell(rows.ba,col).value;
+     const hasA=typeof a==='number'&&Number.isFinite(a);
+     const hasB=typeof b==='number'&&Number.isFinite(b);
+     const target=ws.getCell(rows.avg,col);
+     if(hasA&&hasB)target.value=Math.round(((a+b)/2)*1000)/1000;
+     else if(hasA)target.value=Math.round(a*1000)/1000;
+     else if(hasB)target.value=Math.round(b*1000)/1000;
+     else target.value=null;
+     target.numFmt='0.000';
+    }
+    const totalCol=5+maxEvents;
+    const a=ws.getCell(rows.ab,totalCol).value,b=ws.getCell(rows.ba,totalCol).value;
+    const hasA=typeof a==='number'&&Number.isFinite(a),hasB=typeof b==='number'&&Number.isFinite(b);
+    const target=ws.getCell(rows.avg,totalCol);
+    if(hasA&&hasB)target.value=Math.round(((a+b)/2)*1000)/1000;
+    else if(hasA)target.value=Math.round(a*1000)/1000;
+    else if(hasB)target.value=Math.round(b*1000)/1000;
+    else target.value=null;
+    target.numFmt='0.000';
+   }
+   done.push('Gemiddelde demping per event én gemiddelde totale demping berekend in rijen 62, 75 en 88. De totale demping staat in een aparte kolom direct na het laatste event.');
+   // Samenvatting ringrapport: per golflengte de totale meetlengte en totale demping.
+   // Kies per richting de Yokogawa-meting als die naast een EXFO-referentie aanwezig is;
+   // bij Yokogawa worden 1 km voorspan en 1 km naspan van de lengte afgetrokken.
+   const summaryRows={1310:45,1550:46,1625:47};
+   for(const [wl,row] of Object.entries(summaryRows)){
+    const directionValues=['AB','BA'].map(dir=>{
+     const candidates=ringRecords.filter(r=>r.wl===Number(wl)&&r.dir===dir);
+     if(!candidates.length)return null;
+     const rec=candidates.find(r=>/YOKOGAWA/i.test(String(r.parsed.equipment?.manufacturer||'')))||candidates.find(r=>/EXFO/i.test(String(r.parsed.equipment?.manufacturer||'')))||candidates[0];
+     const isYoko=/YOKOGAWA/i.test(String(rec.parsed.equipment?.manufacturer||''));
+     const rawLength=Number(rec.parsed.spanLength)*1000;
+     const lengthMeters=Number.isFinite(rawLength)&&rawLength>0?Math.max(0,rawLength-(isYoko?2000:0)):NaN;
+     const loss=isYoko&&Number.isFinite(Number(rec.parsed.traceLossDb))?Number(rec.parsed.traceLossDb):(Number(rec.parsed.spanLoss)>0?Number(rec.parsed.spanLoss):Number(rec.parsed.traceLossDb));
+     return {lengthMeters,loss};
+    }).filter(Boolean);
+    if(directionValues.length){
+     const validLengths=directionValues.map(x=>x.lengthMeters).filter(Number.isFinite);
+     const validLosses=directionValues.map(x=>x.loss).filter(x=>Number.isFinite(x)&&x>=0);
+     if(validLengths.length)ws.getCell('F'+row).value=Math.round((validLengths.reduce((a,b)=>a+b,0)/validLengths.length)*100)/100;
+     if(validLosses.length)ws.getCell('I'+row).value=Math.round((validLosses.reduce((a,b)=>a+b,0)/validLosses.length)*1000)/1000;
+     ws.getCell('F'+row).numFmt='0.00';
+     ws.getCell('I'+row).numFmt='0.000';
+    }else{
+     ws.getCell('F'+row).value=null;
+     ws.getCell('I'+row).value=null;
+    }
+   }
+   // Bereken de totale lengte in kolom G: aantal/waarde in kolom E maal lengte in F,
+   // plus alle numerieke aanvullende lengtes die op rij 41 zijn ingevuld.
+   for(const row of [45,46,47]){
+    const target=ws.getCell('G'+row);
+    target.value={formula:'E'+row+'*F'+row+'+SUM(41:41)'};
+    target.numFmt='0.00';
+   }
+   done.push('Meetdatum in C5; totale lengte in F45:F47, totale demping in I45:I47 en berekende waarde in G45:G47 (= E × F + som van de ingevulde numerieke waarden op rij 41).');
+  }
+  if(!ringMode){
+   const dateText=new Intl.DateTimeFormat('nl-NL',{day:'2-digit',month:'2-digit',year:'numeric'}).format(new Date());
+   const sorDates=[...new Set(connectionRecords.map(r=>r.measurementDate).filter(Boolean))];
+   const measurementDate=sorDates[0]||dateText;
+   if(sorDates.length>1)warnings.push('De SOR-bestanden bevatten verschillende meetdatums: '+sorDates.join(', ')+'. De datum van het eerste bestand is ingevuld.');
+   const result=fillConnectionMeasurements(ws,connectionRecords,measurementDate);
+   if(bulkConnectionMode){
+    done.push('Bulkverbinding herkend: alleen Meetrapportage Verbinding is ingevuld. De OTDR-uitwerksheet is bewust overgeslagen.');
+   }else{
+    const workResult=fillOtdrWorkSheet(wb,connectionRecords);
+    done.push('OTDR-uitwerksheet automatisch ingevuld: '+workResult.rows+' regels voor vezels '+workResult.fibers.join(', ')+'.');
+   }
+   totalFilled=result.written;
+   warnings.push(...result.warnings);
+  }else{
+   // Datum en linkbenaming horen bij het ringrapport.
+   // Gebruik de datum uit alle ingelezen ring-SOR's (ook de bestanden uit v02-v12).
+   // Schrijf als echte Excel-datumwaarde zodat de cel niet als tekst blijft staan.
+   const sorDates=[...new Set(ringSourceRecords.map(r=>r.parsed.date).filter(Boolean))];
+   const dateSource=sorDates[0];
+   let excelDate;
+   if(dateSource){
+    const parts=String(dateSource).split(/[-/]/).map(Number);
+    if(parts.length===3){
+     // parseSOR levert d-m-yyyy.
+     const [day,month,year]=parts;
+     excelDate=new Date(year,month-1,day,12,0,0);
+    }
+   }
+   if(!(excelDate instanceof Date) || !Number.isFinite(excelDate.getTime())) excelDate=new Date();
+   ws.getCell('C5').value=excelDate;
+   ws.getCell('C5').numFmt='dd-mm-yyyy';
+   if(sorDates.length>1)warnings.push('De SOR-bestanden bevatten verschillende meetdatums: '+sorDates.join(', ')+'. De datum van het eerste bestand is ingevuld in CC5.');
+   // Bepaal de linkbenaming rechtstreeks uit de oorspronkelijke bestandsnamen.
+   // De eventbestanden zijn leidend; v02-v12-bestanden kunnen een andere schrijfwijze
+   // van het golflengte-suffix hebben. Daardoor mag C6 niet leeg blijven door een
+   // verschil zoals '-1310' versus '_1310'.
+   const normalizeRingLink=n=>String(n||'').trim()
+    .replace(/\.sor$/i,'')
+    .replace(/^v?\s*\d{1,4}(?=$|[\s_-])[\s_-]*/i,'')
+    .replace(/(?:[\s_-]+)(?:1310|1550|1625)(?:\s*nm)?(?:[\s_-].*)?$/i,'')
+    .replace(/[_\s]+/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'');
+   const eventNames=ringSourceRecords.filter(r=>/eventsA|eventsB/.test(files.find(x=>x.file.name===r.fileName)?.group||''));
+   const sourceNames=(eventNames.length?eventNames:ringSourceRecords).map(r=>normalizeRingLink(r.fileName)).filter(Boolean);
+   const uniqueNames=[...new Set(sourceNames)];
+   if(uniqueNames.length){
+    // Kies de meest voorkomende naam; bij gelijke aantallen de eerste bestandsnaam.
+    const counts=new Map();sourceNames.forEach((n,i)=>{const old=counts.get(n)||{count:0,first:i};old.count++;counts.set(n,old);});
+    const chosen=[...counts.entries()].sort((a,b)=>b[1].count-a[1].count||a[1].first-b[1].first)[0][0];
+    ws.getCell('C6').value=chosen;
+    if(uniqueNames.length>1)warnings.push('Er zijn verschillende linkbenamingen aangetroffen. C6 is gevuld met de meest voorkomende naam: '+chosen+'.');
+   }else{
+    const fallback=normalizeRingLink(sorLinkNames[0]||'');
+    if(fallback)ws.getCell('C6').value=fallback;
+    else warnings.push('Geen linkbenaming uit de SOR-bestandsnamen kunnen bepalen; C6 is niet aangepast.');
+   }
+  }
+  const checks=[];
+  if(ringMode){
+   for(const wl of [1310,1550,1625]){
+    const ab=measurements.find(x=>x.wl===wl&&x.dir==='AB'),ba=measurements.find(x=>x.wl===wl&&x.dir==='BA');
+    if(ab&&ba){const diff=Math.abs(ab.lengthMeters-ba.lengthMeters);checks.push(wl+' nm: A-B '+Math.round(ab.lengthMeters)+' m, B-A '+Math.round(ba.lengthMeters)+' m, verschil '+Math.round(diff)+' m — '+(diff<=5?'OK':'AFWIJKING'));if(diff>5)warnings.push(wl+' nm: A-B en B-A verschillen '+diff.toFixed(2)+' meter.');}
+    else if(ab||ba){const m=ab||ba;checks.push(wl+' nm: '+(ab?'A-B':'B-A')+' '+Math.round(m.lengthMeters)+' m — tegenmeting ontbreekt.');}
+   }
+  }
+  warnings.push(...measurements.filter(x=>!Number.isFinite(x.lengthMeters)||x.lengthMeters<=0).map(x=>x.file+': SOR-meetlengte kon niet betrouwbaar worden gelezen.'));
+  if(ringMode){
+   writeRingEquipment(ws,equipmentRecords);
+   done.push('Meetapparatuur ringrapport: Kant A in E5:E10 en Kant B in E18:E23.');
+  }else{
+   writeEquipmentSheet(wb,equipmentRecords);
+   done.push('Meetapparatuur: A-B (locatie A) in kolom C; B-A (locatie B) in kolom F.');
+  }
+  const out=await wb.xlsx.writeBuffer();
+  const blob=new Blob([out],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  // Gebruik voor Ringmetingen én Metingen verbindingen dezelfde bestandsnaamopbouw:
+  // Meetrapportage_<volledige linknaam>.xlsx. Bij ringmetingen is C6 leidend;
+  // bij verbindingen wordt de meest voorkomende linknaam uit de SOR-bestandsnamen gebruikt.
+  const cleanLinkName=n=>String(n||'').trim()
+    .replace(/\.sor$/i,'')
+    .replace(/^v?\s*\d{1,4}(?=$|[\s_-])[\s_-]*/i,'')
+    .replace(/(?:[\s_-]+)(?:A[\s_-]*B|B[\s_-]*A)(?:[\s_-].*)?$/i,'')
+    .replace(/(?:[\s_-]+)(?:1310|1550|1625)(?:\s*nm)?(?:[\s_-].*)?$/i,'')
+    .replace(/[\s_]+/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'');
+  let baseName=ringMode?cleanLinkName(ws.getCell('C6').value):'';
+  if(!baseName){
+    const candidates=sorLinkNames.map(cleanLinkName).filter(Boolean);
+    if(candidates.length){
+      const counts=new Map();
+      candidates.forEach((name,index)=>{const item=counts.get(name)||{count:0,first:index};item.count++;counts.set(name,item);});
+      baseName=[...counts.entries()].sort((a,b)=>b[1].count-a[1].count||a[1].first-b[1].first)[0][0];
+      if(counts.size>1)warnings.push('Meerdere linkbenamingen gevonden. Bestandsnaam gebaseerd op de meest voorkomende link: '+baseName+'.');
+    }
+  }
+  if(!baseName)baseName=ringMode?'Ringmeting':'Verbinding';
+  baseName=baseName.replace(/[\\/:*?"<>|]/g,'-').trim();
+  const outputName='Meetrapportage_'+baseName+'.xlsx';
+  if(outputDirectoryHandle){
+   const outFile=await outputDirectoryHandle.getFileHandle(outputName,{create:true});
+   const writable=await outFile.createWritable();
+   await writable.write(blob);await writable.close();
+   status.textContent='Bestand opgeslagen in de gekozen map: '+outputName;
+  }else{
+   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=outputName;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+  }
+  status.className='status'+(warnings.length?' err':'');
+  status.textContent='Klaar. Vak 1 (OTDR met events): '+(sorBuckets.eventsA.length+sorBuckets.eventsB.length)+' bestanden (A-B: '+sorBuckets.eventsA.length+', B-A: '+sorBuckets.eventsB.length+'). Vak 2 (alleen totale demping): '+sorBuckets.totals.length+' bestanden.\n'+(ringMode?'Ringmetingen – werkblad Meetrapportage Ring:\n':'Metingen verbindingen – werkblad Meetrapportage Verbinding:\n')+done.join('\n')+(checks.length?'\n\nControle meetlengte A-B / B-A:\n'+checks.join('\n'):'')+(warnings.length?'\n\nLET OP:\n'+warnings.join('\n'):'')+'\n\nTotaal verwerkte '+(ringMode?'meetpunten':'vezels')+': '+totalFilled+'.';
+ }catch(e){
+ status.className='status err';
+ const detail=(e&&typeof e==='object'&&(e.message||e.stack))?String(e.message||e.stack):String(e||'Onbekende fout zonder foutdetails');
+ status.textContent='Fout: '+detail;
+ console.error('Meetrapportage fout:',e);
+}
+});
+</script></body></html>
